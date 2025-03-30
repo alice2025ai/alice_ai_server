@@ -8,12 +8,15 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use crate::{ABI, AppConfig};
 use std::str::FromStr;
+use teloxide::Bot;
+use teloxide::prelude::{Requester, UserId};
+use teloxide::types::{ChatPermissions, ChatMemberStatus, Message};
 
 #[derive(Debug, Deserialize)]
 pub struct ChallengeRequest {
     pub challenge: String,
+    pub chat_id: String,
     pub signature: String,
-    pub shares_subject: String,
     pub user: String,
 }
 
@@ -49,6 +52,30 @@ async fn handle_verify(
     config: web::Data<AppConfig>,
     pool: web::Data<PgPool>,
 ) -> impl Responder {
+
+    // Query bot info including subject_address from telegram_bots table using chat_id
+    let bot_info = match sqlx::query!(
+        "SELECT bot_token, chat_group_id, subject_address FROM telegram_bots WHERE chat_group_id = $1",
+        data.chat_id
+    )
+    .fetch_optional(pool.get_ref())
+    .await {
+        Ok(Some(info)) => info,
+        Ok(None) => {
+            println!("No bot info found for chat_id: {}", data.chat_id);
+            return HttpResponse::BadRequest().json(ChallengeResponse {
+                success: false,
+                error: Some("Bot not found for this chat_id".into()),
+            });
+        },
+        Err(e) => {
+            println!("Failed to query bot info: {:?}", e);
+            return HttpResponse::InternalServerError().json(ChallengeResponse {
+                success: false,
+                error: Some(format!("Database query failed: {}", e)),
+            });
+        }
+    };
 
     let own_shares = match verify_signature(
         &data.challenge,
@@ -88,7 +115,8 @@ async fn handle_verify(
                     Arc::new(provider)
                 );
 
-                let subject_address = Address::from_str(&data.shares_subject).expect("Invalid subject address");
+                // Use subject_address from bot_info instead of request
+                let subject_address = Address::from_str(&bot_info.subject_address).expect("Invalid subject address");
 
                 let balance: U256 = contract
                     .method::<_, U256>("sharesBalance", (subject_address, user_address)).expect("Get method failed")
@@ -107,46 +135,31 @@ async fn handle_verify(
             false
         },
     };
-    if !own_shares {
-        let client = Client::new();
-        let url = format!(
-            "https://api.telegram.org/bot{}/banChatMember",
-            config.telegram_bot_token
-        );
-        let params = [
-            ("chat_id", &config.telegram_group_id),
-            ("user_id", &data.challenge),
-        ];
+    if own_shares {
+        let permissions = ChatPermissions::empty()
+            | ChatPermissions::SEND_MESSAGES
+            | ChatPermissions::SEND_MEDIA_MESSAGES
+            | ChatPermissions::SEND_OTHER_MESSAGES
+            | ChatPermissions::SEND_POLLS
+            | ChatPermissions::ADD_WEB_PAGE_PREVIEWS;
 
-        println!("url is {},params is {:?}",url,params);
-        match client.post(&url).form(&params).send().await {
-            Ok(resp) => {
-                println!("resp is {:?}",resp.status());
-                if !resp.status().is_success() {
-                    return HttpResponse::InternalServerError().json(ChallengeResponse {
-                        success: false,
-                        error: Some(format!("Telegram API call failed",)),
-                    });
-                }
+        let bot = Bot::new(bot_info.bot_token);
+        let user_id: u64 = data.challenge.parse().unwrap();
+        match bot.restrict_chat_member(bot_info.chat_group_id, UserId(user_id), permissions).await {
+            Ok(_) => {
+                return HttpResponse::Ok().json(ChallengeResponse {
+                    success: true,
+                    error: None,
+                });
             }
             Err(e) => {
-                println!("Verified signature failed: {:?}",e);
+                println!(" restrict_chat_member failed: {:?}",e);
                 return HttpResponse::InternalServerError().json(ChallengeResponse {
                     success: false,
-                    error: Some(format!("Telegram request failed: {}", e)),
+                    error: Some(format!("Telegram restrict_chat_member failed: {}", e)),
                 });
             },
         }
-        let url = format!(
-            "https://api.telegram.org/bot{}/unbanChatMember",
-            config.telegram_bot_token
-        );
-        let ret = client.post(&url).form(&params).send().await.unwrap();
-        println!("unban chat member ret {:?}",ret);
-        return HttpResponse::Ok().json(ChallengeResponse {
-            success: false,
-            error: None,
-        });
     }
 
     HttpResponse::Ok().json(ChallengeResponse {

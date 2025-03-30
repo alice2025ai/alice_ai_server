@@ -1,6 +1,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use actix_web::HttpResponse;
 use ethers::{
     prelude::*,
     contract::Contract,
@@ -8,10 +9,14 @@ use ethers::{
 use ethers::utils::hex;
 use sqlx::types::BigDecimal;
 use reqwest::Client;
+use teloxide::Bot;
+use teloxide::prelude::{Requester, UserId};
+use teloxide::types::ChatPermissions;
 use crate::{AppConfig};
 
 use crate::block_chain::utils::{TradeEvent, TRADE_ABI};
 use crate::db::operations::{get_last_synced_block, process_buy_trade, process_sell_trade, update_last_synced_block};
+use crate::routes::signature::ChallengeResponse;
 
 // 批量同步历史事件
 pub async fn sync_trade_events(config: AppConfig, pool: sqlx::PgPool) {
@@ -115,7 +120,6 @@ async fn process_trade_event(event: &TradeEvent, pool: &sqlx::PgPool, config: &A
         
         if let Some(user) = user_mapping {
             if user.is_banned {
-                // 检查用户当前的share余额
                 let user_share = sqlx::query!(
                     "SELECT share_amount FROM trades WHERE trader = $1 AND subject = $2",
                     trader.clone(),
@@ -126,7 +130,6 @@ async fn process_trade_event(event: &TradeEvent, pool: &sqlx::PgPool, config: &A
                 
                 if let Some(share) = user_share {
                     if share.share_amount > BigDecimal::from(0) {
-                        // 获取相关bot信息
                         let bot_info = sqlx::query!(
                             "SELECT bot_token, chat_group_id FROM telegram_bots WHERE subject_address = $1",
                             subject.clone()
@@ -135,35 +138,16 @@ async fn process_trade_event(event: &TradeEvent, pool: &sqlx::PgPool, config: &A
                         .await?;
                         
                         if let Some(bot_info) = bot_info {
-                            // 调用Telegram API解禁用户
-                            let url = format!(
-                                "https://api.telegram.org/bot{}/unbanChatMember",
-                                bot_info.bot_token
-                            );
-                            let params = [
-                                ("chat_id", &bot_info.chat_group_id),
-                                ("user_id", &user.telegram_id),
-                                ("only_if_banned", &"true".to_string()),
-                            ];
-                            
-                            match client.post(&url).form(&params).send().await {
-                                Ok(resp) => {
-                                    println!("Unban user response: {:?}", resp.status());
-                                    if resp.status().is_success() {
-                                        // 更新用户禁止状态
-                                        sqlx::query!(
-                                            "UPDATE user_mappings SET is_banned = false WHERE address = $1",
-                                            trader.clone()
-                                        )
-                                        .execute(pool)
-                                        .await?;
-                                        println!("User {} has been unbanned", event.trader);
-                                    }
-                                },
-                                Err(e) => {
-                                    println!("Unban user request failed: {:?}", e);
-                                }
-                            }
+                            let permissions = ChatPermissions::empty()
+                                | ChatPermissions::SEND_MESSAGES
+                                | ChatPermissions::SEND_MEDIA_MESSAGES
+                                | ChatPermissions::SEND_OTHER_MESSAGES
+                                | ChatPermissions::SEND_POLLS
+                                | ChatPermissions::ADD_WEB_PAGE_PREVIEWS;
+
+                            let bot = Bot::new(bot_info.bot_token);
+                            let user_id: u64 = user.telegram_id.parse().unwrap();
+                            bot.restrict_chat_member(bot_info.chat_group_id, UserId(user_id), permissions).await?;
                         }
                     }
                 }
@@ -192,34 +176,17 @@ async fn process_trade_event(event: &TradeEvent, pool: &sqlx::PgPool, config: &A
                 .await?;
                 
                 if let Some(bot_info) = bot_info {
-                    // Use the specific bot token and chat group id for this subject
-                    let url = format!(
-                        "https://api.telegram.org/bot{}/banChatMember",
-                        bot_info.bot_token
-                    );
-                    let params = [
-                        ("chat_id", &bot_info.chat_group_id),
-                        ("user_id", &telegram_id),
-                    ];
-                    
-                    match client.post(&url).form(&params).send().await {
-                        Ok(resp) => {
-                            println!("Ban user response: {:?}", resp.status());
-                            if resp.status().is_success() {
-                                // 更新用户的禁止状态
-                                sqlx::query!(
-                                    "UPDATE user_mappings SET is_banned = true WHERE address = $1",
-                                    trader.clone()
-                                )
-                                .execute(pool)
-                                .await?;
-                                println!("User {} has been banned and status updated", &trader);
-                            }
-                        },
-                        Err(e) => {
-                            println!("Ban user request failed: {:?}", e);
-                        }
-                    }
+                    let permissions = ChatPermissions::empty();
+
+                    let bot = Bot::new(bot_info.bot_token);
+                    let user_id: u64 = telegram_id.parse().unwrap();
+                    bot.restrict_chat_member(bot_info.chat_group_id, UserId(user_id), permissions).await?;
+                    sqlx::query!(
+                        "UPDATE user_mappings SET is_banned = true WHERE address = $1",
+                        trader.clone()
+                    )
+                    .execute(pool)
+                    .await?;
                 } else {
                     println!("No telegram bot info found for subject {}", &subject);
                 }

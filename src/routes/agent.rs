@@ -80,55 +80,6 @@ async fn handle_add_tg_bot(
     match result {
         Ok(_) => {
             println!("New Telegram bot added, Agent: {}", data.agent_name);
-
-            // Start new bot processing task
-            let bot_token = data.bot_token.clone();
-            tokio::spawn(async move {
-                let bot = Bot::new(&bot_token);
-                println!("Starting new Telegram bot, Token: {}", bot_token);
-                teloxide::repl(bot, move |bot: Bot, msg: Message| {
-                    let subject = subject_address.clone();
-                    async move {
-                        if let Some(new_chat_members) = msg.new_chat_members() {
-                            for user in new_chat_members {
-                                println!(
-                                    "[newChatMember] chat ID: {}, user ID: {}, user name: @{}",
-                                    msg.chat.id,
-                                    user.id,
-                                    user.username.as_deref().unwrap_or("nick user")
-                                );
-
-                                let url_str = format!("http://38.54.24.5:3000/web3-sign?challenge={}&subject={}", user.id, subject);
-                                let url = Url::parse(&url_str).unwrap();
-                                let keyboard = InlineKeyboardMarkup::new(
-                                    vec![vec![
-                                        InlineKeyboardButton::url(
-                                            "ClickToSign",
-                                            url,
-                                        )
-                                    ]]
-                                );
-
-                                bot.send_message(user.id, "Please sign to verify wallet ownership:")
-                                    .reply_markup(keyboard)
-                                    .await.unwrap();
-                            }
-                        }
-
-                        if let Some(user) = msg.left_chat_member() {
-                            println!(
-                                "[MemberLeft] chat ID: {}, user ID: {}, user name: @{}",
-                                msg.chat.id,
-                                user.id,
-                                user.username.as_deref().unwrap_or("nick user")
-                            )
-                        }
-
-                        respond(())
-                    }
-                }).await;
-            });
-
             HttpResponse::Ok().json(AddTelegramBotResponse {
                 success: true,
                 error: None,

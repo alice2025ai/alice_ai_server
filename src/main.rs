@@ -97,57 +97,7 @@ async fn main() {
     // Initialize database tables
     //init_db(&pool).await.expect("Failed to initialize database");
     
-    let bots = sqlx::query!("SELECT bot_token FROM telegram_bots")
-        .fetch_all(&pool)
-        .await
-        .expect("Failed to fetch existing bot configurations");
     
-    for bot_record in bots {
-        let bot_token = bot_record.bot_token;
-        println!("Starting existing bot with token: {}", bot_token);
-        
-        tokio::spawn(async move {
-            let bot = Bot::new(&bot_token);
-            teloxide::repl(bot, |bot: Bot, msg: Message| async move {
-                if let Some(new_chat_members) = msg.new_chat_members() {
-                    for user in new_chat_members {
-                        println!(
-                            "[newChatMember] chat ID: {}, user ID: {}, user name: @{}",
-                            msg.chat.id,
-                            user.id,
-                            user.username.as_deref().unwrap_or("nick user")
-                        );
-                        
-                        let url_str = format!("http://127.0.0.1:8000/sign.html?challenge={}", user.id);
-                        let url = Url::parse(&url_str).unwrap();
-                        let keyboard = InlineKeyboardMarkup::new(
-                            vec![vec![
-                                InlineKeyboardButton::url(
-                                    "ClickToSign",
-                                     url,
-                                )
-                            ]]
-                        );
-
-                        bot.send_message(user.id, "Please sign to verify wallet ownership:")
-                            .reply_markup(keyboard)
-                            .await.unwrap();
-                    }
-                }
-
-                if let Some(user) = msg.left_chat_member() {
-                    println!(
-                        "[MemberLeft] chat ID: {}, user ID: {}, user name: @{}",
-                        msg.chat.id,
-                        user.id,
-                        user.username.as_deref().unwrap_or("nick user")
-                    )
-                }
-
-                respond(())
-            }).await;
-        });
-    }
     
     // Set up signal handler for graceful shutdown
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -183,9 +133,6 @@ async fn main() {
     })
         .bind("0.0.0.0:8088").unwrap()
         .run();
-    
-
-    let bot = Bot::new(&config.telegram_bot_token);
     
     // Create futures for all main tasks
     let server_future = http_server;
