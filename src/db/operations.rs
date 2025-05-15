@@ -182,7 +182,7 @@ pub async fn get_user_shares(
     Ok(rows)
 }
 
-// 更新带有元数据的最后同步区块信息
+// Update last synchronized block info with metadata
 pub async fn update_last_synced_block_with_metadata(
     pool: &PgPool, 
     block_number: u64, 

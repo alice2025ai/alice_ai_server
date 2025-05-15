@@ -4,7 +4,7 @@ use ethers::{
 };
 use ethers::utils::hex;
 
-// 验证签名
+// Verify signature
 pub fn verify_signature(
     challenge: &str,
     signature: &str,
@@ -24,7 +24,7 @@ pub fn verify_signature(
     Ok(recovered_address)
 }
 
-// 定义Trade事件结构
+// Define Trade event structure
 #[derive(Debug, EthEvent)]
 #[ethevent(
     name = "Trade",
@@ -43,7 +43,7 @@ pub struct TradeEvent {
     pub supply: U256,
 }
 
-// ABI常量
+// ABI constants
 pub const ABI: &str = r#"[	{
     "inputs": [
         {
@@ -132,23 +132,23 @@ mod tests {
     
     #[test]
     fn test_keccak256_hash() {
-        // 准备测试数据
+        // Prepare test data
         let input = "Trade(address,address,bool,uint256,uint256,uint256,uint256,uint256)";
         
-        // 执行keccak256哈希
+        // Execute keccak256 hash
         let hash_result = keccak256(input.as_bytes());
         
-        // 将结果转换为十六进制字符串以便验证
+        // Convert result to hex string for verification
         let hash_hex = hex::encode(hash_result);
         println!("{hash_hex}")
         
-        // // 预期的哈希值 (可以通过其他工具验证)
+        // // Expected hash value (can be verified with other tools)
         // let expected_hex = "f45f5e9619efb8a2a6600b6f7e382a4e141f7a9668a8c242c38232a43e433a01";
         //
-        // // 断言哈希结果是否符合预期
+        // // Assert hash result matches expected
         // assert_eq!(hash_hex, expected_hex);
         //
-        // // 测试空字符串
+        // // Test empty string
         // let empty_hash = hex::encode(keccak256("".as_bytes()));
         // let expected_empty = "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470";
         // assert_eq!(empty_hash, expected_empty);

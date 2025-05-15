@@ -20,7 +20,7 @@ use crate::block_chain::utils::{TradeEvent, TRADE_ABI, ABI};
 use crate::db::operations::{get_last_synced_block, process_buy_trade, process_sell_trade, update_last_synced_block};
 use crate::AppConfig;
 
-/// Monad区块链实现
+/// Monad blockchain implementation
 pub struct MonadBlockchain {
     provider: Arc<Provider<Http>>,
     contract_address: Address,
@@ -41,7 +41,7 @@ impl MonadBlockchain {
         }
     }
     
-    /// 处理交易事件
+    /// Process trade event
     async fn process_trade_event(&self, event: &TradeEvent, pool: &sqlx::PgPool) -> Result<()> {
         println!("Processing Monad Trade event: {:?}", event);
         
@@ -51,7 +51,7 @@ impl MonadBlockchain {
         let subject = hex::encode(event.subject.as_bytes());
         
         if event.is_buy {
-            // 买入操作，增加份额
+            // Buy operation, increase shares
             process_buy_trade(
                 pool, 
                 trader.clone(),
@@ -60,7 +60,7 @@ impl MonadBlockchain {
                 self.get_name(),
             ).await?;
             
-            // 检查用户是否处于禁止状态
+            // Check if user is banned
             let user_mapping = sqlx::query!(
                 "SELECT telegram_id, is_banned FROM user_mappings WHERE address = $1 AND chain_type = $2",
                 trader.clone(), 
@@ -107,7 +107,7 @@ impl MonadBlockchain {
                 }
             }
         } else {
-            // 卖出操作，减少份额
+            // Sell operation, decrease shares
             println!("Trader {} sell {} shares of subject {}", trader, share_amount, subject);
             let (should_ban, telegram_id_opt) = process_sell_trade(
                 pool,

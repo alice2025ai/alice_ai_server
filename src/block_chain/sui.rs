@@ -19,7 +19,7 @@ use crate::block_chain::Blockchain;
 use crate::db::operations::{get_last_synced_block, get_last_synced_block_with_metadata, process_buy_trade, process_sell_trade, update_last_synced_block, update_last_synced_block_with_metadata};
 use crate::AppConfig;
 
-/// Sui区块链实现
+/// Sui blockchain implementation
 pub struct SuiBlockchain {
     rpc_url: String,
     contract_address: String,
@@ -29,21 +29,21 @@ pub struct SuiBlockchain {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SuiTradeEvent {
-    /// 交易者地址
+    /// Trader address
     trader: String,
-    /// 对象地址
+    /// Object address
     subject: String,
-    /// 是否为买入
+    /// Whether it's a buy
     is_buy: bool,
-    /// 交易数量（字符串格式）
+    /// Transaction amount (string format)
     amount: String,
-    /// 价格（字符串格式）
+    /// Price (string format)
     price: String,
-    /// 协议费用（字符串格式）
+    /// Protocol fee (string format)
     protocol_fee: String,
-    /// 对象所有者费用（字符串格式）
+    /// Object owner fee (string format)
     subject_fee: String,
-    /// 总供应量（字符串格式）
+    /// Total supply (string format)
     supply: String,
 }
 
@@ -54,13 +54,13 @@ struct SuiEventPage {
     hasNextPage: bool,
 }
 
-/// Sui事件的游标结构
+/// Sui event cursor structure
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct EventID {
-    /// 交易摘要
+    /// Transaction digest
     #[serde(rename = "txDigest")]
     tx_digest: String,
-    /// 事件序列号
+    /// Event sequence number
     #[serde(rename = "eventSeq")]
     event_seq: String,
 }
@@ -98,24 +98,34 @@ impl SuiBlockchain {
         }
     }
     
-    /// 处理Sui交易事件
+    /// Remove 0x prefix from address
+    fn remove_0x_prefix(&self, address: &str) -> String {
+        if address.starts_with("0x") {
+            address[2..].to_string()
+        } else {
+            address.to_string()
+        }
+    }
+    
+    /// Process Sui trade event
     async fn process_trade_event(&self, event: &SuiTradeEvent, pool: &sqlx::PgPool) -> Result<()> {
         println!("Processing Sui Trade event: {:?}", event);
         
-        // 将字符串解析为 u64
+        // Parse string to u64
         let share_amount = match event.amount.parse::<u64>() {
             Ok(amount) => BigDecimal::from(amount),
             Err(e) => {
-                println!("无法解析交易数量: {} - {:?}", event.amount, e);
-                return Err(anyhow!("无法解析交易数量"));
+                println!("Cannot parse transaction amount: {} - {:?}", event.amount, e);
+                return Err(anyhow!("Cannot parse transaction amount"));
             }
         };
         
-        let trader = event.trader.clone();
-        let subject = event.subject.clone();
+        // Remove 0x prefix from address
+        let trader = self.remove_0x_prefix(&event.trader);
+        let subject = self.remove_0x_prefix(&event.subject);
         
         if event.is_buy {
-            // 买入操作，增加份额
+            // Buy operation, increase shares
             process_buy_trade(
                 pool, 
                 trader.clone(),
@@ -124,7 +134,7 @@ impl SuiBlockchain {
                 self.get_name(),
             ).await?;
             
-            // 检查用户是否处于禁止状态
+            // Check if user is banned
             let user_mapping = sqlx::query!(
                 "SELECT telegram_id, is_banned FROM user_mappings WHERE address = $1 AND chain_type = $2",
                 trader.clone(), 
@@ -171,7 +181,7 @@ impl SuiBlockchain {
                 }
             }
         } else {
-            // 卖出操作，减少份额
+            // Sell operation, decrease shares
             println!("Trader {} sell {} shares of subject {}", trader, share_amount, subject);
             let (should_ban, telegram_id_opt) = process_sell_trade(
                 pool,
@@ -216,33 +226,33 @@ impl SuiBlockchain {
         Ok(())
     }
     
-    /// 调用Sui RPC获取事件
+    /// Call Sui RPC to get events
     async fn get_events(&self, start_cursor: Option<String>, limit: u64) -> Result<SuiEventPage> {
         let client = Client::new();
         
-        // 构建查询JSON
+        // Build query JSON
         let query_type = if self.contract_address.is_empty() {
-            // 使用MoveEvent事件类型
+            // Use MoveEvent event type
             json!({
                 "MoveEventType": "package::module::Trade"
             })
         } else {
-            // 使用特定的包地址
+            // Use specific package address
             json!({
                 "MoveEventType": format!("{}::shares_trading::Trade", self.contract_address)
             })
         };
         
-        // 处理cursor参数
+        // Process cursor parameter
         let cursor_param: Option<serde_json::Value> = match start_cursor {
             Some(cursor_str) => {
-                // 检查是否已经是JSON格式
+                // Check if already JSON format
                 if cursor_str.trim().starts_with('{') {
                     match serde_json::from_str(&cursor_str) {
                         Ok(json_val) => Some(json_val),
                         Err(_) => {
-                            // 如果解析失败，尝试创建一个新的EventID
-                            // 使用有效的交易哈希（64个十六进制字符）
+                            // If parsing fails, try to create a new EventID
+                            // Use valid transaction hash (64 hexadecimal characters)
                             Some(json!({
                                 "txDigest": "0000000000000000000000000000000000000000000000000000000000000000",
                                 "eventSeq": cursor_str
@@ -250,8 +260,8 @@ impl SuiBlockchain {
                         }
                     }
                 } else {
-                    // 假设是简单字符串，包装为EventID结构
-                    // 使用有效的交易哈希（64个十六进制字符）
+                    // Assume simple string, wrap as EventID structure
+                    // Use valid transaction hash (64 hexadecimal characters)
                     Some(json!({
                         "txDigest": "0000000000000000000000000000000000000000000000000000000000000000",
                         "eventSeq": cursor_str
@@ -279,35 +289,43 @@ impl SuiBlockchain {
             .await?;
         
         if !response.status().is_success() {
-            return Err(anyhow!("Sui RPC请求失败: {}", response.status()));
+            return Err(anyhow!("Sui RPC request failed: {}", response.status()));
         }
         
         let response_json: Value = response.json().await?;
         
         if let Some(error) = response_json.get("error") {
-            return Err(anyhow!("Sui RPC返回错误: {}", error));
+            return Err(anyhow!("Sui RPC returned error: {}", error));
         }
         
-        // 解析结果
+        // Parse result
         if let Some(result) = response_json.get("result") {
-            println!("result: {:?}", result);
+            // println!("result: {:?}", result);
             let events: SuiEventPage = serde_json::from_value(result.clone())?;
             return Ok(events);
         }
         
-        Err(anyhow!("无法解析Sui RPC响应"))
+        Err(anyhow!("Cannot parse Sui RPC response"))
     }
     
-    /// 获取Sui上的份额
+    /// Get shares on Sui
     async fn get_sui_shares(&self, subject: &str, user: &str) -> Result<u64> {
         let client = Client::new();
         
-        // 构建调用智能合约函数的JSON-RPC请求
+        // Remove address prefix, ensure consistency
+        let clean_subject = self.remove_0x_prefix(subject);
+        let clean_user = self.remove_0x_prefix(user);
+        
+        // For RPC call, need to add back 0x prefix
+        let subject_with_prefix = format!("0x{}", clean_subject);
+        let user_with_prefix = format!("0x{}", clean_user);
+        
+        // Build JSON-RPC request to call smart contract function
         let payload = json!({
             "jsonrpc": "2.0",
             "method": "sui_devInspectTransactionBlock",
             "params": [
-                "0x0", // 发送者地址（无意义，因为只是读取状态）
+                "0x0", // Sender address (meaningless, just reading state)
                 {
                     "kind": "moveCall",
                     "data": {
@@ -316,8 +334,8 @@ impl SuiBlockchain {
                         "function": "get_shares_balance",
                         "arguments": [
                             self.shares_trading_object_id,
-                            subject,
-                            user
+                            subject_with_prefix,
+                            user_with_prefix
                         ]
                     }
                 }
@@ -331,16 +349,16 @@ impl SuiBlockchain {
             .await?;
         
         if !response.status().is_success() {
-            return Err(anyhow!("Sui RPC请求失败: {}", response.status()));
+            return Err(anyhow!("Sui RPC request failed: {}", response.status()));
         }
         
         let response_json: Value = response.json().await?;
         
         if let Some(error) = response_json.get("error") {
-            return Err(anyhow!("Sui RPC返回错误: {}", error));
+            return Err(anyhow!("Sui RPC returned error: {}", error));
         }
         
-        // 解析返回结果（实际部署时需根据合约的具体返回格式调整）
+        // Parse return result (actual deployment needs to adjust based on contract's specific return format)
         if let Some(result) = response_json.get("result").and_then(|r| r.get("results")).and_then(|r| r.as_array()) {
             if let Some(first_result) = result.first() {
                 if let Some(return_values) = first_result.get("returnValues").and_then(|v| v.as_array()) {
@@ -353,7 +371,7 @@ impl SuiBlockchain {
             }
         }
         
-        // 默认返回0
+        // Default return 0
         Ok(0)
     }
 }
@@ -365,15 +383,15 @@ impl Blockchain for SuiBlockchain {
     }
     
     async fn sync_events(&self, pool: &PgPool) -> Result<()> {
-        // 获取最后同步的数据（Sui用cursor表示），同时获取元数据
+        // Get last synced data (Sui uses cursor) and get metadata
         let (last_cursor_num, metadata) = get_last_synced_block_with_metadata(pool, 0, self.get_name()).await?;
         println!("last_cursor_num: {}", last_cursor_num);
-        println!("元数据查询结果: {:?}", metadata);
+        println!("Metadata query result: {:?}", metadata);
         
-        // 初始化光标 - 优先使用元数据
+        // Initialize cursor - prioritize using metadata
         let mut cursor_str: Option<String> = if let Some(meta_str) = metadata {
-            println!("找到有效元数据: {}", meta_str);
-            // 存在有效的元数据，使用它恢复cursor
+            println!("Found valid metadata: {}", meta_str);
+            // If there's valid metadata, use it to restore cursor
             Some(meta_str)
         } else {
             None
@@ -381,38 +399,38 @@ impl Blockchain for SuiBlockchain {
         
         println!("Starting sync from cursor {:?} for {}", cursor_str, self.get_name());
         
-        // 事件同步循环
+        // Event sync loop
         loop {
-            // 查询事件
+            // Query events
             match self.get_events(cursor_str.clone(), 100).await {
                 Ok(events) => {
-                    println!("Found {} events for {} with cursor {:?}", events.data.len(), self.get_name(), cursor_str);
+                    //println!("Found {} events for {} with cursor {:?}", events.data.len(), self.get_name(), cursor_str);
                     
-                    // 处理每个事件
+                    // Process each event
                     for event in &events.data {
                         if let Err(e) = self.process_trade_event(&event.parsed_json, pool).await {
                             println!("Error processing Sui trade event: {:?}", e);
                         }
                     }
                     
-                    // 更新光标
+                    // Update cursor
                     if let Some(next_cursor) = events.nextCursor {
-                        // 将 EventID 序列化为 JSON 字符串
+                        // Serialize EventID to JSON string
                         let next_cursor_json = serde_json::to_string(&next_cursor).unwrap_or_default();
                         cursor_str = Some(next_cursor_json.clone());
                         
-                        // 将完整的EventID序列化为JSON字符串存储到数据库中
-                        // 使用txDigest作为数值部分（转为u64），将完整JSON存储在metadata字段中
+                        // Serialize full EventID as JSON string to database
+                        // Use txDigest as numeric part (converted to u64), and full JSON in metadata field
                         let tx_digest_hash = u64::from_str_radix(&next_cursor.tx_digest[0..16], 16).unwrap_or(0);
                         
-                        println!("更新同步进度: tx_digest={}, eventSeq={}, hash={}, json={}",
-                            next_cursor.tx_digest, next_cursor.event_seq, tx_digest_hash, next_cursor_json);
+                        // println!("Updating sync progress: tx_digest={}, eventSeq={}, hash={}, json={}",
+                        //     next_cursor.tx_digest, next_cursor.event_seq, tx_digest_hash, next_cursor_json);
                             
                         if let Err(e) = update_last_synced_block_with_metadata(pool, tx_digest_hash, next_cursor_json, self.get_name()).await {
                             println!("Failed to update last synced cursor: {:?}", e);
                         }
                     } else if !events.hasNextPage {
-                        // 没有更多事件，等待一段时间再继续
+                        // No more events, wait for new events
                         println!("No more events available for {}, waiting for new events...", self.get_name());
                         tokio::time::sleep(Duration::from_secs(60)).await;
                     }
@@ -423,31 +441,31 @@ impl Blockchain for SuiBlockchain {
                 }
             }
             
-            // 短暂休息，避免请求过于频繁
+            // Brief rest, avoid too frequent requests
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
     
     fn verify_signature(&self, challenge: &str, signature: &str) -> Result<String, String> {
-        // 使用sui-sdk库进行签名验证
-        // 步骤1：解码Base64格式的签名
+        // Use sui-sdk library for signature verification
+        // Step 1: Decode Base64 format signature
         let signature_bytes = match BASE64_STANDARD.decode(signature) {
             Ok(bytes) => bytes,
-            Err(e) => return Err(format!("无法解码签名: {}", e)),
+            Err(e) => return Err(format!("Cannot decode signature: {}", e)),
         };
         
-        // 步骤2：解析Sui地址
+        // Step 2: Parse Sui address
         let sui_address = match SuiAddress::from_str(challenge) {
             Ok(addr) => addr,
-            Err(e) => return Err(format!("无效的地址格式: {}", e)),
+            Err(e) => return Err(format!("Invalid address format: {}", e)),
         };
         
-        // 由于Sui SDK的架构变更，我们需要简化验签逻辑
-        // 在实际应用中，你应该用更完整的验证逻辑替换这部分
-        // 例如，使用IntentMessage和Signature::new_secure
+        // Since Sui SDK architecture changed, we need to simplify verification logic
+        // In actual application, you should use more complete verification logic instead of this part
+        // For example, use IntentMessage and Signature::new_secure
         
-        // 这里简单返回验证通过的地址
-        return Ok(format!("0x{}", sui_address));
+        // Here simply return verified address, remove 0x prefix
+        return Ok(self.remove_0x_prefix(&format!("0x{}", sui_address)));
     }
     
     async fn get_shares_balance(&self, subject: &str, user: &str) -> Result<u64> {
