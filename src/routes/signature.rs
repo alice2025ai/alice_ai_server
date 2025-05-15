@@ -1,16 +1,15 @@
 use std::sync::Arc;
 use actix_web::{HttpResponse, post, Responder, web};
 use ethers::addressbook::Address;
-use ethers::prelude::{Http, Provider, Signature, U256};
+use ethers::prelude::Signature;
 use ethers::utils::{hash_message, hex};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use crate::{ABI, AppConfig};
-use std::str::FromStr;
+use crate::AppConfig;
 use teloxide::Bot;
 use teloxide::prelude::{Requester, UserId};
-use teloxide::types::{ChatPermissions, ChatMemberStatus, Message};
+use teloxide::types::ChatPermissions;
+use crate::block_chain::{Blockchain, create_blockchain};
 
 #[derive(Debug, Deserialize)]
 pub struct ChallengeRequest {
@@ -18,6 +17,7 @@ pub struct ChallengeRequest {
     pub chat_id: String,
     pub signature: String,
     pub user: String,
+    pub chain_type: Option<String>, // 添加链类型，默认为monad
 }
 
 #[derive(Debug, Serialize)]
@@ -52,20 +52,23 @@ async fn handle_verify(
     config: web::Data<AppConfig>,
     pool: web::Data<PgPool>,
 ) -> impl Responder {
+    // 确定链类型，默认为monad
+    let chain_type = data.chain_type.clone().unwrap_or_else(|| "monad".to_string());
 
     // Query bot info including subject_address from telegram_bots table using chat_id
     let bot_info = match sqlx::query!(
-        "SELECT bot_token, chat_group_id, subject_address FROM telegram_bots WHERE chat_group_id = $1",
-        data.chat_id
+        "SELECT bot_token, chat_group_id, subject_address FROM telegram_bots WHERE chat_group_id = $1 AND chain_type = $2",
+        data.chat_id,
+        chain_type
     )
     .fetch_optional(pool.get_ref())
     .await {
         Ok(Some(info)) => info,
         Ok(None) => {
-            println!("No bot info found for chat_id: {}", data.chat_id);
+            println!("No bot info found for chat_id: {} and chain: {}", data.chat_id, chain_type);
             return HttpResponse::BadRequest().json(ChallengeResponse {
                 success: false,
-                error: Some("Bot not found for this chat_id".into()),
+                error: Some(format!("Bot not found for this chat_id in {} chain", chain_type)),
             });
         },
         Err(e) => {
@@ -77,27 +80,28 @@ async fn handle_verify(
         }
     };
 
-    let own_shares = match verify_signature(
+    // 创建对应链的处理实例
+    let blockchain = create_blockchain(&chain_type, Arc::new(config.get_ref().clone()));
+    
+    let own_shares = match blockchain.verify_signature(
         &data.challenge,
-        // &data.address,
         &data.signature,
     ) {
-        Ok(address) => {
-            println!("Verified address is {}",address.to_string());
-            let user_address = Address::from_str(&data.user).expect("Invalid user address");
-            if user_address == address {
+        Ok(verified_address) => {
+            println!("Verified address is {}", verified_address);
+            
+            if data.user == verified_address {
                 // When address matches, save user address and Telegram ID to database
-                let user_address_str = hex::encode(user_address.as_bytes());
                 let telegram_id = &data.challenge;
 
                 // Check if user address already exists
-                //todo: User should be able to unbind/update current address or Telegram
                 let result = sqlx::query!(
-                    "INSERT INTO user_mappings (address, telegram_id)
-                     VALUES ($1, $2)
-                     ON CONFLICT (address) DO NOTHING",
-                    user_address_str,
-                    telegram_id
+                    "INSERT INTO user_mappings (address, telegram_id, chain_type)
+                     VALUES ($1, $2, $3)
+                     ON CONFLICT (address, chain_type) DO UPDATE SET telegram_id = $2",
+                    verified_address,
+                    telegram_id,
+                    chain_type
                 )
                     .execute(pool.get_ref())
                     .await;
@@ -106,27 +110,21 @@ async fn handle_verify(
                     println!("Failed to save user mapping: {:?}", e);
                 }
 
-                let provider = Provider::<Http>::try_from(&config.chain_rpc).expect("Connect monad failed");
-                let contract_address = Address::from_str(&config.shares_contract).expect("Invalid contract");
-                let abi: ethers::abi::Abi = serde_json::from_str(ABI).expect("Invalid abi");
-                let contract = ethers::contract::Contract::new(
-                    contract_address,
-                    abi,
-                    Arc::new(provider)
-                );
+                // 获取用户持有的份额
+                let has_shares = match blockchain.get_shares_balance(&bot_info.subject_address, &verified_address).await {
+                    Ok(balance) => {
+                        println!("User {} balance for subject {}: {}", verified_address, bot_info.subject_address, balance);
+                        balance > 0
+                    },
+                    Err(e) => {
+                        println!("Failed to get shares balance: {:?}", e);
+                        false
+                    }
+                };
 
-                // Use subject_address from bot_info instead of request
-                let subject_address = Address::from_str(&bot_info.subject_address).expect("Invalid subject address");
-
-                let balance: U256 = contract
-                    .method::<_, U256>("sharesBalance", (subject_address, user_address)).expect("Get method failed")
-                    .call()
-                    .await.expect("Call sharesBalance failed");
-
-                println!("Balance: {}", balance);
-                !balance.is_zero()
+                has_shares
             } else {
-                println!("Address mismatch with signature!");
+                println!("Address mismatch with signature! Verified: {}, Expected: {}", verified_address, data.user);
                 false
             }
         }
@@ -135,6 +133,7 @@ async fn handle_verify(
             false
         },
     };
+    
     if own_shares {
         let permissions = ChatPermissions::empty()
             | ChatPermissions::SEND_MESSAGES

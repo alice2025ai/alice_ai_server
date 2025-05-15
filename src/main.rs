@@ -1,30 +1,14 @@
-
 mod block_chain;
 mod db;
 mod routes;
 
 use std::env;
 use actix_cors::Cors;
-use actix_web::{App, HttpServer,HttpResponse, post, web,Responder, get};
-// main.rs
-use teloxide::{prelude::*};
+use actix_web::{App, HttpServer, web};
 use dotenv::dotenv;
-use reqwest::Url;
-use teloxide::types::{ChatMemberKind, InlineKeyboardButton, InlineKeyboardMarkup};
-use ethers::{
-    prelude::*,
-    utils::hash_message,
-};
-use ethers::utils::hex;
-use reqwest::Client;
-use std::str::FromStr;
-use ethers::abi::Abi;
 use std::sync::Arc;
 use std::time::Duration;
 use sqlx::{postgres::PgPoolOptions, PgPool};
-use anyhow;
-use std::collections::HashMap;
-use chrono;
 use crate::routes::signature::handle_verify;
 use crate::routes::agent::{handle_add_tg_bot,get_agents,get_agent_by_name,get_agent_detail};
 use crate::routes::user::get_user_shares_handler;
@@ -61,11 +45,13 @@ struct AppConfig {
     chain_rpc: String,
     database_url: String,
     start_block: u64,
+    // Sui链配置
+    sui_rpc: Option<String>,
+    sui_contract: Option<String>,
+    sui_shares_trading_object_id: Option<String>,
 }
 
-use serde::{Deserialize, Serialize};
-use sqlx::types::BigDecimal;
-use crate::block_chain::sync::sync_trade_events;
+use crate::block_chain::monad::sync_trade_events;
 
 #[tokio::main]
 async fn main() {
@@ -85,6 +71,9 @@ async fn main() {
             .expect("START_BLOCK not set")
             .parse()
             .expect("START_BLOCK must be a number"),
+        sui_rpc: env::var("SUI_RPC").ok().map(|s| s),
+        sui_contract: env::var("SUI_CONTRACT").ok().map(|s| s),
+        sui_shares_trading_object_id: env::var("SUI_SHARES_TRADING_OBJECT_ID").ok().map(|s| s),
     };
     
     // Initialize database connection pool

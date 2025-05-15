@@ -1,18 +1,27 @@
 use std::collections::HashMap;
 use actix_web::{get, HttpResponse, post, Responder, web};
-use reqwest::Url;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use sqlx::PgPool;
-use teloxide::{Bot, respond};
-use teloxide::prelude::{Message,Requester};
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
-use teloxide::payloads::SendMessageSetters;
+use time::PrimitiveDateTime;
+
+// 自定义时间序列化函数
+fn serialize_datetime<S>(
+    datetime: &PrimitiveDateTime,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let string_value = datetime.to_string();
+    serializer.serialize_str(&string_value)
+}
 
 #[derive(Debug, Serialize)]
 pub struct Agent {
     pub agent_name: String,
     pub subject_address: String,
-    pub created_at: chrono::NaiveDateTime,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub created_at: PrimitiveDateTime,
 }
 
 #[derive(Debug, Serialize)]
@@ -58,6 +67,7 @@ pub struct AddTelegramBotResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
 #[post("/add_tg_bot")]
 async fn handle_add_tg_bot(
     data: web::Json<AddTelegramBotRequest>,
@@ -131,9 +141,8 @@ async fn get_agents(
     };
 
     // Get paginated agents
-    let agents_result = sqlx::query_as!(
-        Agent,
-        "SELECT agent_name, subject_address, created_at  FROM telegram_bots ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+    let agents_result = sqlx::query!(
+        "SELECT agent_name, subject_address, created_at FROM telegram_bots ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         page_size,
         offset
     )
@@ -141,7 +150,16 @@ async fn get_agents(
         .await;
 
     match agents_result {
-        Ok(agents) => {
+        Ok(rows) => {
+            // 手动转换查询结果到Agent结构体
+            let agents: Vec<Agent> = rows.into_iter()
+                .map(|row| Agent {
+                    agent_name: row.agent_name,
+                    subject_address: row.subject_address,
+                    created_at: row.created_at,
+                })
+                .collect();
+
             HttpResponse::Ok().json(AgentListResponse {
                 agents,
                 total,
@@ -165,8 +183,7 @@ async fn get_agent_by_name(
 ) -> impl Responder {
     let agent_name = path.into_inner();
 
-    let agent_result = sqlx::query_as!(
-        Agent,
+    let agent_result = sqlx::query!(
         "SELECT agent_name, subject_address, created_at FROM telegram_bots WHERE agent_name = $1",
         agent_name
     )
@@ -174,9 +191,23 @@ async fn get_agent_by_name(
         .await;
 
     match agent_result {
-        Ok(agent) => {
+        Ok(Some(row)) => {
+            // 手动创建Agent结构体
+            let agent = Agent {
+                agent_name: row.agent_name,
+                subject_address: row.subject_address,
+                created_at: row.created_at,
+            };
+            
             HttpResponse::Ok().json(AgentResponse {
-                agent,
+                agent: Some(agent),
+                success: true,
+                error: None,
+            })
+        },
+        Ok(None) => {
+            HttpResponse::Ok().json(AgentResponse {
+                agent: None,
                 success: true,
                 error: None,
             })

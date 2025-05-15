@@ -20,7 +20,8 @@ pub async fn init_db(pool: &PgPool) -> Result<(), sqlx::Error> {
         );
         CREATE TABLE IF NOT EXISTS sync_status (
             id SERIAL PRIMARY KEY,
-            last_synced_block BIGINT NOT NULL
+            last_synced_block BIGINT NOT NULL,
+            metadata TEXT
         );
         CREATE TABLE IF NOT EXISTS telegram_bots (
             agent_name VARCHAR NOT NULL PRIMARY KEY,
@@ -35,6 +36,11 @@ pub async fn init_db(pool: &PgPool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+    
+    // 确保metadata列存在
+    sqlx::query("ALTER TABLE sync_status ADD COLUMN IF NOT EXISTS metadata TEXT;")
+        .execute(pool)
+        .await?;
     
     Ok(())
 }
