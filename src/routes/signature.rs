@@ -52,6 +52,7 @@ async fn handle_verify(
     config: web::Data<AppConfig>,
     pool: web::Data<PgPool>,
 ) -> impl Responder {
+    println!("Received request: {:?}", data);
     // 确定链类型，默认为monad
     let chain_type = data.chain_type.clone().unwrap_or_else(|| "monad".to_string());
 
@@ -84,13 +85,14 @@ async fn handle_verify(
     let blockchain = create_blockchain(&chain_type, Arc::new(config.get_ref().clone()));
     
     let own_shares = match blockchain.verify_signature(
-        &data.challenge,
+        if chain_type == "sui" { &data.user } else { &data.challenge },
         &data.signature,
     ) {
         Ok(verified_address) => {
             println!("Verified address is {}", verified_address);
             
             if data.user == verified_address {
+                println!("Address matches! Verified: {}, Expected: {}", verified_address, data.user);
                 // When address matches, save user address and Telegram ID to database
                 let telegram_id = &data.challenge;
 

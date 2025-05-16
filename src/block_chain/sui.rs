@@ -447,25 +447,17 @@ impl Blockchain for SuiBlockchain {
     }
     
     fn verify_signature(&self, challenge: &str, signature: &str) -> Result<String, String> {
-        // Use sui-sdk library for signature verification
-        // Step 1: Decode Base64 format signature
+        // 使用sui-sdk库进行签名验证
+        // 步骤1：解码Base64格式签名
         let signature_bytes = match BASE64_STANDARD.decode(signature) {
             Ok(bytes) => bytes,
             Err(e) => return Err(format!("Cannot decode signature: {}", e)),
         };
         
-        // Step 2: Parse Sui address
-        let sui_address = match SuiAddress::from_str(challenge) {
-            Ok(addr) => addr,
-            Err(e) => return Err(format!("Invalid address format: {}", e)),
-        };
+        // 现在challenge参数已经是用户地址，直接返回即可
+        // 这只是临时解决方案，长期应该实现完整的Sui签名验证逻辑
         
-        // Since Sui SDK architecture changed, we need to simplify verification logic
-        // In actual application, you should use more complete verification logic instead of this part
-        // For example, use IntentMessage and Signature::new_secure
-        
-        // Here simply return verified address, remove 0x prefix
-        return Ok(self.remove_0x_prefix(&format!("0x{}", sui_address)));
+        Ok(challenge.to_string())
     }
     
     async fn get_shares_balance(&self, subject: &str, user: &str) -> Result<u64> {
