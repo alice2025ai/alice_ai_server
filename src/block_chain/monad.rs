@@ -166,16 +166,16 @@ impl Blockchain for MonadBlockchain {
         let abi: ethers::abi::Abi = serde_json::from_str(TRADE_ABI).expect("Invalid ABI");
         let contract = Contract::new(contract_address, abi, provider.clone());
         
-        // 获取最后同步的区块号
+        // Get the last synced block number
         let mut last_synced_block = get_last_synced_block(pool, self.config.start_block, self.get_name()).await?;
         
         println!("Starting sync from block {} for {}", last_synced_block, self.get_name());
         
-        // 批量同步的区块间隔
+        // Block batch size for bulk sync
         const BLOCK_BATCH_SIZE: u64 = 100;
         
         loop {
-            // 获取当前链上最新区块
+            // Get the current chain's latest block
             let current_block = match provider.get_block_number().await {
                 Ok(block) => block.as_u64(),
                 Err(e) => {
@@ -186,36 +186,36 @@ impl Blockchain for MonadBlockchain {
             };
             
             if last_synced_block >= current_block {
-                // 已经同步到最新区块，等待一段时间后继续
+                // Already synced to the latest block, wait for a while before continuing
                 println!("Synced to current block {} for {}, waiting for new blocks...", current_block, self.get_name());
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 continue;
             }
             
-            // 计算本次同步的结束区块
+            // Calculate the end block for this sync
             let end_block = std::cmp::min(last_synced_block + BLOCK_BATCH_SIZE, current_block);
             
             println!("Syncing blocks {} to {} for {}", last_synced_block, end_block, self.get_name());
             
-            // 创建过滤器查询历史事件
+            // Create a filter to query historical events
             let filter = contract
                 .event::<TradeEvent>()
                 .from_block(last_synced_block)
                 .to_block(end_block);
             
-            // 查询事件
+            // Query events
             match filter.query().await {
                 Ok(events) => {
                     println!("Found {} events in blocks {} to {} for {}", events.len(), last_synced_block, end_block, self.get_name());
                     
-                    // 处理每个事件
+                    // Process each event
                     for event in events {
                         if let Err(e) = self.process_trade_event(&event, pool).await {
                             println!("Error processing trade event: {:?}", e);
                         }
                     }
                     
-                    // 更新最后同步的区块号
+                    // Update the last synced block number
                     if let Err(e) = update_last_synced_block(pool, end_block, self.get_name()).await {
                         println!("Failed to update last synced block: {:?}", e);
                     } else {
@@ -228,7 +228,6 @@ impl Blockchain for MonadBlockchain {
                 }
             }
             
-            // 短暂休息，避免请求过于频繁
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
@@ -273,14 +272,13 @@ impl Blockchain for MonadBlockchain {
     }
 }
 
-// 批量同步历史事件，适配原始接口
+// Bulk sync historical events, compatible with the original interface
 pub async fn sync_trade_events(config: AppConfig, pool: sqlx::PgPool) {
     let config_arc = Arc::new(config);
     
-    // 创建需要同步的链任务
+    // Create tasks for chains to sync
     let mut sync_tasks = Vec::new();
     
-    // 根据特性标志决定是否启动Monad链同步
     #[cfg(feature = "monad")]
     {
         let monad = MonadBlockchain::new(config_arc.clone());
@@ -291,7 +289,6 @@ pub async fn sync_trade_events(config: AppConfig, pool: sqlx::PgPool) {
         }));
     }
     
-    // 根据特性标志决定是否启动Sui链同步
     #[cfg(feature = "sui")]
     {
         let sui = crate::block_chain::sui::SuiBlockchain::new(config_arc.clone());
@@ -302,6 +299,5 @@ pub async fn sync_trade_events(config: AppConfig, pool: sqlx::PgPool) {
         }));
     }
     
-    // 并发执行所有启用的链同步任务
     futures::future::join_all(sync_tasks).await;
 } 

@@ -71,7 +71,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- 为需要自动更新时间的表添加触发器
+-- Add triggers to automatically update the modified time for tables that need it
 CREATE TRIGGER update_sync_status_modtime
     BEFORE UPDATE ON sync_status
     FOR EACH ROW

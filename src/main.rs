@@ -45,7 +45,7 @@ struct AppConfig {
     chain_rpc: String,
     database_url: String,
     start_block: u64,
-    // Sui链配置
+    // Sui chain configuration
     sui_rpc: Option<String>,
     sui_contract: Option<String>,
     sui_shares_trading_object_id: Option<String>,

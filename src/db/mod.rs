@@ -3,7 +3,7 @@ pub mod operations;
 
 use sqlx::PgPool;
 
-// 初始化数据库函数
+// Initialize database function
 pub async fn init_db(pool: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS trades (
@@ -37,7 +37,7 @@ pub async fn init_db(pool: &PgPool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
     
-    // 确保metadata列存在
+    // Ensure metadata column exists
     sqlx::query("ALTER TABLE sync_status ADD COLUMN IF NOT EXISTS metadata TEXT;")
         .execute(pool)
         .await?;

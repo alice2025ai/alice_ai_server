@@ -36,7 +36,7 @@ pub async fn get_user_shares_handler(
     println!("chain_type: {:?}", chain_type);
     let shares = get_user_shares(&pool, &user_address, &chain_type)
         .await
-        .map_err(|_| actix_web::error::ErrorInternalServerError("数据库操作失败"))?;
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Database operation failed"))?;
     
     let subject_shares = shares
         .into_iter()

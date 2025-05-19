@@ -17,7 +17,7 @@ pub struct ChallengeRequest {
     pub chat_id: String,
     pub signature: String,
     pub user: String,
-    pub chain_type: Option<String>, // 添加链类型，默认为monad
+    pub chain_type: Option<String>, // Add chain type, default is monad
 }
 
 #[derive(Debug, Serialize)]
@@ -53,7 +53,7 @@ async fn handle_verify(
     pool: web::Data<PgPool>,
 ) -> impl Responder {
     println!("Received request: {:?}", data);
-    // 确定链类型，默认为monad
+    // Determine chain type, default is monad
     let chain_type = data.chain_type.clone().unwrap_or_else(|| "monad".to_string());
 
     // Query bot info including subject_address from telegram_bots table using chat_id
@@ -81,7 +81,7 @@ async fn handle_verify(
         }
     };
 
-    // 创建对应链的处理实例
+    // Create blockchain instance for the appropriate chain
     let blockchain = create_blockchain(&chain_type, Arc::new(config.get_ref().clone()));
     
     let own_shares = match blockchain.verify_signature(
@@ -112,7 +112,7 @@ async fn handle_verify(
                     println!("Failed to save user mapping: {:?}", e);
                 }
 
-                // 获取用户持有的份额
+                // Get user's share balance
                 let has_shares = match blockchain.get_shares_balance(&bot_info.subject_address, &verified_address).await {
                     Ok(balance) => {
                         println!("User {} balance for subject {}: {}", verified_address, bot_info.subject_address, balance);

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use sqlx::PgPool;
 use time::PrimitiveDateTime;
 
-// 自定义时间序列化函数
+// Custom datetime serialization function
 fn serialize_datetime<S>(
     datetime: &PrimitiveDateTime,
     serializer: S,
@@ -151,7 +151,7 @@ async fn get_agents(
 
     match agents_result {
         Ok(rows) => {
-            // 手动转换查询结果到Agent结构体
+            // Manually convert query results to Agent struct
             let agents: Vec<Agent> = rows.into_iter()
                 .map(|row| Agent {
                     agent_name: row.agent_name,
@@ -192,7 +192,7 @@ async fn get_agent_by_name(
 
     match agent_result {
         Ok(Some(row)) => {
-            // 手动创建Agent结构体
+            // Manually create Agent struct
             let agent = Agent {
                 agent_name: row.agent_name,
                 subject_address: row.subject_address,
